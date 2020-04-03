@@ -36,7 +36,6 @@ from urllib.parse import unquote
 
 import docutils
 from docutils.parsers import rst
-import jinja2
 import nbconvert
 import nbformat
 import sphinx
@@ -691,128 +690,266 @@ div.admonition.inline-title p.admonition-title {
 """
 
 
-class Exporter(nbconvert.RSTExporter):
-    """Convert Jupyter notebooks to reStructuredText.
+#class Exporter(nbconvert.Exporter):
+#
+#    def __init__(self, execute='auto', kernel_name='', execute_arguments=[],
+#                 allow_errors=False, timeout=None, codecell_lexer='none'):
+#        """Initialize the Exporter."""
+#
+#        # NB: The following stateful Jinja filters are a hack until
+#        # template-based processing is dropped
+#        # (https://github.com/spatialaudio/nbsphinx/issues/36) or someone
+#        # comes up with a better idea.
+#
+#        # NB: This instance-local state makes the methods non-reentrant!
+#        attachment_storage = []
+#
+#        def save_attachments(cell):
+#            for filename, bundle in cell.get('attachments', {}).items():
+#                attachment_storage.append((filename, bundle))
+#
+#        def replace_attachments(text):
+#            for filename, bundle in attachment_storage:
+#                # For now, this works only if there is a single MIME bundle
+#                (mime_type, data), = bundle.items()
+#                text = re.sub(
+#                    r'^(\s*\.\. (\|[^|]*\| image|figure)::) attachment:{0}$'
+#                        .format(filename),
+#                    r'\1 data:{0};base64,{1}'.format(mime_type, data),
+#                    text, flags=re.MULTILINE)
+#            del attachment_storage[:]
+#            return text
+#
+#        self._execute = execute
+#        self._kernel_name = kernel_name
+#        self._execute_arguments = execute_arguments
+#        self._allow_errors = allow_errors
+#        self._timeout = timeout
+#        self._codecell_lexer = codecell_lexer
+#        super(Exporter, self).__init__(
+#            config=traitlets.config.Config({
+#                'HighlightMagicsPreprocessor': {'enabled': True},
+#                # Work around https://github.com/jupyter/nbconvert/issues/720:
+#                'RegexRemovePreprocessor': {'enabled': False},
+#            }),
+#            #filters={
+#            #    'convert_pandoc': convert_pandoc,
+#            #    'markdown2rst': markdown2rst,
+#            #    'get_empty_lines': _get_empty_lines,
+#            #    'extract_gallery_or_toctree': _extract_gallery_or_toctree,
+#            #    'save_attachments': save_attachments,
+#            #    'replace_attachments': replace_attachments,
+#            #    'get_output_type': _get_output_type,
+#            #    'json_dumps': json.dumps,
+#            #    'basename': os.path.basename,
+#            #    'dirname': os.path.dirname,
+#            #}
+#            )
 
-    Uses nbconvert to convert Jupyter notebooks to a reStructuredText
-    string with custom reST directives for input and output cells.
 
-    Notebooks without output cells are automatically executed before
-    conversion.
+class NotebookParser(rst.Parser):
+    """Sphinx source parser for Jupyter notebooks."""
 
-    """
+    supported = 'jupyter_notebook',
 
-    def __init__(self, execute='auto', kernel_name='', execute_arguments=[],
-                 allow_errors=False, timeout=None, codecell_lexer='none'):
-        """Initialize the Exporter."""
+    def get_transforms(self):
+        """List of transforms for documents parsed by this parser."""
+        return rst.Parser.get_transforms(self) + [
+            CreateNotebookSectionAnchors,
+            ReplaceAlertDivs,
+            CopyLinkedFiles,
+        ]
 
-        # NB: The following stateful Jinja filters are a hack until
-        # template-based processing is dropped
-        # (https://github.com/spatialaudio/nbsphinx/issues/36) or someone
-        # comes up with a better idea.
+    def parse(self, inputstring, document):
+        """Parse *inputstring*, write results to *document*.
 
-        # NB: This instance-local state makes the methods non-reentrant!
-        attachment_storage = []
+        *inputstring* is either the JSON representation of a notebook,
+        or a paragraph of text coming from the Sphinx translation
+        machinery.
 
-        def save_attachments(cell):
-            for filename, bundle in cell.get('attachments', {}).items():
-                attachment_storage.append((filename, bundle))
+        Note: For now, the translation strings use reST formatting,
+        because the NotebookParser uses reST as intermediate
+        representation.
+        However, there are plans to remove this intermediate step
+        (https://github.com/spatialaudio/nbsphinx/issues/36), and after
+        that, the translated strings will most likely be parsed as
+        CommonMark.
 
-        def replace_attachments(text):
-            for filename, bundle in attachment_storage:
-                # For now, this works only if there is a single MIME bundle
-                (mime_type, data), = bundle.items()
-                text = re.sub(
-                    r'^(\s*\.\. (\|[^|]*\| image|figure)::) attachment:{0}$'
-                        .format(filename),
-                    r'\1 data:{0};base64,{1}'.format(mime_type, data),
-                    text, flags=re.MULTILINE)
-            del attachment_storage[:]
-            return text
+        If the configuration value "nbsphinx_custom_formats" is
+        specified, the input string is converted to the Jupyter notebook
+        format with the given conversion function.
 
-        self._execute = execute
-        self._kernel_name = kernel_name
-        self._execute_arguments = execute_arguments
-        self._allow_errors = allow_errors
-        self._timeout = timeout
-        self._codecell_lexer = codecell_lexer
-        loader = jinja2.DictLoader({'nbsphinx-rst.tpl': RST_TEMPLATE})
-        super(Exporter, self).__init__(
-            template_file='nbsphinx-rst.tpl', extra_loaders=[loader],
-            config=traitlets.config.Config({
-                'HighlightMagicsPreprocessor': {'enabled': True},
-                # Work around https://github.com/jupyter/nbconvert/issues/720:
-                'RegexRemovePreprocessor': {'enabled': False},
-            }),
-            filters={
-                'convert_pandoc': convert_pandoc,
-                'markdown2rst': markdown2rst,
-                'get_empty_lines': _get_empty_lines,
-                'extract_gallery_or_toctree': _extract_gallery_or_toctree,
-                'save_attachments': save_attachments,
-                'replace_attachments': replace_attachments,
-                'get_output_type': _get_output_type,
-                'json_dumps': json.dumps,
-                'basename': os.path.basename,
-                'dirname': os.path.dirname,
-            })
-
-    def from_notebook_node(self, nb, resources=None, **kw):
-        nb = copy.deepcopy(nb)
-        if resources is None:
-            resources = {}
+        """
+        env = document.settings.env
+        formats = {
+            '.ipynb': lambda s: nbformat.reads(s, as_version=_ipynbversion)}
+        formats.update(env.config.nbsphinx_custom_formats)
+        srcfile = env.doc2path(env.docname, base=None)
+        for format, converter in formats.items():
+            if srcfile.endswith(format):
+                break
         else:
-            resources = copy.deepcopy(resources)
+            raise NotebookError(
+                'No converter was found for {!r}'.format(srcfile))
+        if isinstance(converter, collections.Sequence):
+            if len(converter) != 2:
+                raise NotebookError(
+                    'The values of nbsphinx_custom_formats must be '
+                    'either strings or 2-element sequences')
+            converter, kwargs = converter
+        else:
+            kwargs = {}
+        if isinstance(converter, str):
+            converter = sphinx.util.import_object(converter)
+        try:
+            nb = converter(inputstring, **kwargs)
+        except Exception:
+            # NB: The use of the RST parser is temporary!
+            # TODO: use (custom) Markdown parser instead of RST parser?
+            rst.Parser.parse(self, inputstring, document)
+            return
+
+        srcdir = os.path.dirname(env.doc2path(env.docname))
+        auxdir = env.nbsphinx_auxdir
+
+        resources = {}
+        # Working directory for ExecutePreprocessor
+        resources['metadata'] = {'path': srcdir}
+        # Sphinx doesn't accept absolute paths in images etc.
+        resources['output_files_dir'] = os.path.relpath(auxdir, srcdir)
+        resources['unique_key'] = re.sub('[/ ]', '_', env.docname)
+
+        # NB: The source file could have a different suffix
+        #     if nbsphinx_custom_formats is used.
+        notebookfile = env.docname + '.ipynb'
+        env.nbsphinx_notebooks[env.docname] = notebookfile
+        auxfile = os.path.join(auxdir, notebookfile)
+        sphinx.util.ensuredir(os.path.dirname(auxfile))
+        resources['nbsphinx_save_notebook'] = auxfile
+
+
+
+        exporter = nbconvert.Exporter(
+            #execute=env.config.nbsphinx_execute,
+            #kernel_name=env.config.nbsphinx_kernel_name,
+            #execute_arguments=env.config.nbsphinx_execute_arguments,
+            #allow_errors=env.config.nbsphinx_allow_errors,
+            #timeout=env.config.nbsphinx_timeout,
+            #codecell_lexer=env.config.nbsphinx_codecell_lexer,
+        )
+
+        try:
+            nb, resources = exporter.from_notebook_node(nb, resources)
+        except nbconvert.preprocessors.execute.CellExecutionError as e:
+            lines = str(e).split('\n')
+            lines[0] = 'CellExecutionError in {}:'.format(
+                env.doc2path(env.docname, base=None))
+            lines.append("You can ignore this error by setting the following "
+                         "in conf.py:\n\n    nbsphinx_allow_errors = True\n")
+            raise NotebookError('\n'.join(lines))
+        except Exception as e:
+            raise NotebookError(type(e).__name__ + ' in ' +
+                                env.doc2path(env.docname, base=None) + ':\n' +
+                                str(e))
+
+
+        #nb = copy.deepcopy(nb)
+        #resources = copy.deepcopy(resources)
+
         # Set default codecell lexer
-        resources['codecell_lexer'] = self._codecell_lexer
+        #resources['codecell_lexer'] = self._codecell_lexer
 
         nbsphinx_metadata = nb.metadata.get('nbsphinx', {})
 
-        execute = nbsphinx_metadata.get('execute', self._execute)
-        if execute not in ('always', 'never', 'auto'):
-            raise ValueError('invalid execute option: {!r}'.format(execute))
-        auto_execute = (
-            execute == 'auto' and
-            # At least one code cell actually containing source code:
-            any(c.source for c in nb.cells if c.cell_type == 'code') and
-            # No outputs, not even a prompt number:
-            not any(c.get('outputs') or c.get('execution_count')
-                    for c in nb.cells if c.cell_type == 'code')
-        )
-        if auto_execute or execute == 'always':
-            allow_errors = nbsphinx_metadata.get(
-                'allow_errors', self._allow_errors)
-            timeout = nbsphinx_metadata.get('timeout', self._timeout)
-            pp = nbconvert.preprocessors.ExecutePreprocessor(
-                kernel_name=self._kernel_name,
-                extra_arguments=self._execute_arguments,
-                allow_errors=allow_errors, timeout=timeout)
-            nb, resources = pp.preprocess(nb, resources)
+        # TODO: re-integrate ExecutePreprocessor?
+
+        #execute = nbsphinx_metadata.get('execute', self._execute)
+        #if execute not in ('always', 'never', 'auto'):
+        #    raise ValueError('invalid execute option: {!r}'.format(execute))
+        #auto_execute = (
+        #    execute == 'auto' and
+        #    # At least one code cell actually containing source code:
+        #    any(c.source for c in nb.cells if c.cell_type == 'code') and
+        #    # No outputs, not even a prompt number:
+        #    not any(c.get('outputs') or c.get('execution_count')
+        #            for c in nb.cells if c.cell_type == 'code')
+        #)
+        #if auto_execute or execute == 'always':
+        #    allow_errors = nbsphinx_metadata.get(
+        #        'allow_errors', self._allow_errors)
+        #    timeout = nbsphinx_metadata.get('timeout', self._timeout)
+        #    pp = nbconvert.preprocessors.ExecutePreprocessor(
+        #        kernel_name=self._kernel_name,
+        #        extra_arguments=self._execute_arguments,
+        #        allow_errors=allow_errors, timeout=timeout)
+        #    nb, resources = pp.preprocess(nb, resources)
+
 
         if 'nbsphinx_save_notebook' in resources:
             # Save *executed* notebook *before* the Exporter can change it:
             nbformat.write(nb, resources['nbsphinx_save_notebook'])
 
-        # Call into RSTExporter
-        rststr, resources = super(Exporter, self).from_notebook_node(
-            nb, resources, **kw)
+        # Create additional output files (figures etc.),
+        # see nbconvert.writers.FilesWriter.write()
+        for filename, data in resources.get('outputs', {}).items():
+            dest = os.path.normpath(os.path.join(srcdir, filename))
+            with open(dest, 'wb') as f:
+                f.write(data)
 
         orphan = nbsphinx_metadata.get('orphan', False)
         if orphan is True:
-            resources['nbsphinx_orphan'] = True
+            rst.Parser.parse(self, ':orphan:', document)
         elif orphan is not False:
             raise ValueError('invalid orphan option: {!r}'.format(orphan))
 
+
+#        rststring = """
+#.. role:: nbsphinx-math(raw)
+#    :format: latex + html
+#    :class: math
+#
+#..
+#
+#""" + rststring
+
+
+
+        # TODO: get Jinja environment from Sphinx or from nbconvert?
+        #if env.config.nbsphinx_prolog:
+        #    prolog = exporter.environment.from_string(
+        #        env.config.nbsphinx_prolog).render(env=env)
+        #    rst.Parser.parse(self, prolog, document)
+
+
+        # TODO: do something with notebook metadata?
+
+
         if 'application/vnd.jupyter.widget-state+json' in nb.metadata.get(
                 'widgets', {}):
-            resources['nbsphinx_widgets'] = True
+            env.nbsphinx_widgets.add(env.docname)
+
+
+
+        for cell_index, cell in enumerate(nb.cells):
+            if cell.cell_type == 'code':
+                print('TODO: code cell')
+            elif cell.cell_type == 'markdown':
+                rststring = markdown2rst(cell.source)
+                rst.Parser.parse(self, rststring, document)
+            elif cell.cell_type == 'raw':
+                print('TODO: raw cell')
+            else:
+                print('TODO: warning: unknown cell type')
+
+
+
 
         thumbnail = {}
 
         def warning(msg, *args):
             logger.warning(
                 '"nbsphinx-thumbnail": ' + msg, *args,
-                location=resources.get('nbsphinx_docname'))
+                location=env.docname)
             thumbnail['filename'] = _BROKEN_THUMBNAIL
 
         for cell_index, cell in enumerate(nb.cells):
@@ -874,152 +1011,14 @@ class Exporter(nbconvert.RSTExporter):
                 warning('Unsupported MIME type(s) in cell %s/output %s: %s',
                         cell_index, output_index, set(out.data))
                 break
-        resources['nbsphinx_thumbnail'] = thumbnail
-        return rststr, resources
 
 
-class NotebookParser(rst.Parser):
-    """Sphinx source parser for Jupyter notebooks.
+        env.nbsphinx_thumbnails[env.docname] = thumbnail
 
-    Uses nbsphinx.Exporter to convert notebook content to a
-    reStructuredText string, which is then parsed by Sphinx's built-in
-    reST parser.
-
-    """
-
-    supported = 'jupyter_notebook',
-
-    def get_transforms(self):
-        """List of transforms for documents parsed by this parser."""
-        return rst.Parser.get_transforms(self) + [
-            CreateNotebookSectionAnchors,
-            ReplaceAlertDivs,
-            CopyLinkedFiles,
-        ]
-
-    def parse(self, inputstring, document):
-        """Parse *inputstring*, write results to *document*.
-
-        *inputstring* is either the JSON representation of a notebook,
-        or a paragraph of text coming from the Sphinx translation
-        machinery.
-
-        Note: For now, the translation strings use reST formatting,
-        because the NotebookParser uses reST as intermediate
-        representation.
-        However, there are plans to remove this intermediate step
-        (https://github.com/spatialaudio/nbsphinx/issues/36), and after
-        that, the translated strings will most likely be parsed as
-        CommonMark.
-
-        If the configuration value "nbsphinx_custom_formats" is
-        specified, the input string is converted to the Jupyter notebook
-        format with the given conversion function.
-
-        """
-        env = document.settings.env
-        formats = {
-            '.ipynb': lambda s: nbformat.reads(s, as_version=_ipynbversion)}
-        formats.update(env.config.nbsphinx_custom_formats)
-        srcfile = env.doc2path(env.docname, base=None)
-        for format, converter in formats.items():
-            if srcfile.endswith(format):
-                break
-        else:
-            raise NotebookError(
-                'No converter was found for {!r}'.format(srcfile))
-        if isinstance(converter, collections.Sequence):
-            if len(converter) != 2:
-                raise NotebookError(
-                    'The values of nbsphinx_custom_formats must be '
-                    'either strings or 2-element sequences')
-            converter, kwargs = converter
-        else:
-            kwargs = {}
-        if isinstance(converter, str):
-            converter = sphinx.util.import_object(converter)
-        try:
-            nb = converter(inputstring, **kwargs)
-        except Exception:
-            # NB: The use of the RST parser is temporary!
-            rst.Parser.parse(self, inputstring, document)
-            return
-
-        srcdir = os.path.dirname(env.doc2path(env.docname))
-        auxdir = env.nbsphinx_auxdir
-
-        resources = {}
-        # Working directory for ExecutePreprocessor
-        resources['metadata'] = {'path': srcdir}
-        # Sphinx doesn't accept absolute paths in images etc.
-        resources['output_files_dir'] = os.path.relpath(auxdir, srcdir)
-        resources['unique_key'] = re.sub('[/ ]', '_', env.docname)
-        resources['nbsphinx_docname'] = env.docname
-
-        # NB: The source file could have a different suffix
-        #     if nbsphinx_custom_formats is used.
-        notebookfile = env.docname + '.ipynb'
-        env.nbsphinx_notebooks[env.docname] = notebookfile
-        auxfile = os.path.join(auxdir, notebookfile)
-        sphinx.util.ensuredir(os.path.dirname(auxfile))
-        resources['nbsphinx_save_notebook'] = auxfile
-
-        exporter = Exporter(
-            execute=env.config.nbsphinx_execute,
-            kernel_name=env.config.nbsphinx_kernel_name,
-            execute_arguments=env.config.nbsphinx_execute_arguments,
-            allow_errors=env.config.nbsphinx_allow_errors,
-            timeout=env.config.nbsphinx_timeout,
-            codecell_lexer=env.config.nbsphinx_codecell_lexer,
-        )
-
-        try:
-            rststring, resources = exporter.from_notebook_node(nb, resources)
-        except nbconvert.preprocessors.execute.CellExecutionError as e:
-            lines = str(e).split('\n')
-            lines[0] = 'CellExecutionError in {}:'.format(
-                env.doc2path(env.docname, base=None))
-            lines.append("You can ignore this error by setting the following "
-                         "in conf.py:\n\n    nbsphinx_allow_errors = True\n")
-            raise NotebookError('\n'.join(lines))
-        except Exception as e:
-            raise NotebookError(type(e).__name__ + ' in ' +
-                                env.doc2path(env.docname, base=None) + ':\n' +
-                                str(e))
-
-        rststring = """
-.. role:: nbsphinx-math(raw)
-    :format: latex + html
-    :class: math
-
-..
-
-""" + rststring
-
-        # Create additional output files (figures etc.),
-        # see nbconvert.writers.FilesWriter.write()
-        for filename, data in resources.get('outputs', {}).items():
-            dest = os.path.normpath(os.path.join(srcdir, filename))
-            with open(dest, 'wb') as f:
-                f.write(data)
-
-        if resources.get('nbsphinx_orphan', False):
-            rst.Parser.parse(self, ':orphan:', document)
-        if env.config.nbsphinx_prolog:
-            prolog = exporter.environment.from_string(
-                env.config.nbsphinx_prolog).render(env=env)
-            rst.Parser.parse(self, prolog, document)
-        rst.Parser.parse(self, rststring, document)
-        if env.config.nbsphinx_epilog:
-            epilog = exporter.environment.from_string(
-                env.config.nbsphinx_epilog).render(env=env)
-            rst.Parser.parse(self, epilog, document)
-
-        if resources.get('nbsphinx_widgets', False):
-            env.nbsphinx_widgets.add(env.docname)
-
-        env.nbsphinx_thumbnails[env.docname] = resources.get(
-            'nbsphinx_thumbnail', {})
+        #if env.config.nbsphinx_epilog:
+        #    epilog = exporter.environment.from_string(
+        #        env.config.nbsphinx_epilog).render(env=env)
+        #    rst.Parser.parse(self, epilog, document)
 
 
 class NotebookError(sphinx.errors.SphinxError):
