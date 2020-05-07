@@ -84,7 +84,7 @@ jobs:
       - run:
           name: Checking for Outdated Links
           command: |
-            python3 -m sphinx doc _build/linkcheck -d _doctrees -W -b linkcheck
+            python3 -m sphinx doc _build/linkcheck -d _doctrees -W -b linkcheck -Dlinkcheck_workers=3
 
 workflows:
   version: 2
