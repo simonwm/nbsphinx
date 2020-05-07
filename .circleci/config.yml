@@ -58,33 +58,33 @@ jobs:
       - run:
           name: Building HTML
           command: |
-            python3 setup.py build_sphinx -W -b html
+            python3 -m sphinx doc _build/html -d _doctrees -W -b html
 
       - store_artifacts:
           name: Uploading HTML files
-          path: build/sphinx/html
+          path: _build/html
           destination: html
 
       - run:
           name: Building LaTeX
           command: |
-            python3 setup.py build_sphinx -W -b latex
+            python3 -m sphinx doc _build/latex -d _doctrees -W -b latex
 
       - run:
           name: Building PDF
           command: |
-            cd build/sphinx/latex
+            cd _build/latex
             latexmk -pdf
 
       - store_artifacts:
           name: Uploading PDF file
-          path: build/sphinx/latex/nbsphinx.pdf
+          path: _build/latex/nbsphinx.pdf
           destination: nbsphinx.pdf
 
       - run:
           name: Checking for Outdated Links
           command: |
-            python3 setup.py build_sphinx -W -b linkcheck
+            python3 -m sphinx doc _build/linkcheck -d _doctrees -W -b linkcheck
 
 workflows:
   version: 2
