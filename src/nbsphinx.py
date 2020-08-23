@@ -894,7 +894,154 @@ class Exporter(nbconvert.RSTExporter):
         return rststr, resources
 
 
-class NotebookParser(rst.Parser):
+class NotebookParser(docutils.parsers.Parser):
+    """Sphinx source parser for Jupyter notebooks."""
+
+    supported = 'jupyter_notebook',
+
+    def get_transforms(self):
+        """List of transforms for documents parsed by this parser."""
+        return super().get_transforms() + [
+            CreateNotebookSectionAnchors,
+            ReplaceAlertDivs,
+            CopyLinkedFiles,
+        ]
+
+    def parse(self, inputstring, document):
+        """Parse *inputstring*, write results to *document*.
+
+        *inputstring* is either the JSON representation of a notebook,
+        or a paragraph of text coming from the Sphinx translation
+        machinery.
+
+        Note: For now, the translation strings use reST formatting,
+        because the NotebookParser uses reST as intermediate
+        representation.
+        However, there are plans to remove this intermediate step
+        (https://github.com/spatialaudio/nbsphinx/issues/36), and after
+        that, the translated strings will most likely be parsed as
+        CommonMark.
+
+        If the configuration value "nbsphinx_custom_formats" is
+        specified, the input string is converted to the Jupyter notebook
+        format with the given conversion function.
+
+        """
+        env = document.settings.env
+        formats = {
+            '.ipynb': lambda s: nbformat.reads(s, as_version=_ipynbversion)}
+        formats.update(env.config.nbsphinx_custom_formats)
+        srcfile = env.doc2path(env.docname, base=None)
+        for format, converter in formats.items():
+            if srcfile.endswith(format):
+                break
+        else:
+            raise NotebookError(
+                'No converter was found for {!r}'.format(srcfile))
+        if (isinstance(converter, collections.abc.Sequence) and
+                not isinstance(converter, str)):
+            if len(converter) != 2:
+                raise NotebookError(
+                    'The values of nbsphinx_custom_formats must be '
+                    'either strings or 2-element sequences')
+            converter, kwargs = converter
+        else:
+            kwargs = {}
+        if isinstance(converter, str):
+            converter = sphinx.util.import_object(converter)
+        try:
+            nb = converter(inputstring, **kwargs)
+        except Exception:
+            # NB: The use of the RST parser is temporary!
+            rst.Parser.parse(self, inputstring, document)
+            return
+
+        srcdir = os.path.dirname(env.doc2path(env.docname))
+        auxdir = env.nbsphinx_auxdir
+
+        resources = {}
+        # Working directory for ExecutePreprocessor
+        resources['metadata'] = {'path': srcdir}
+        # Sphinx doesn't accept absolute paths in images etc.
+        resources['output_files_dir'] = os.path.relpath(auxdir, srcdir)
+        resources['unique_key'] = re.sub('[/ ]', '_', env.docname)
+        resources['nbsphinx_docname'] = env.docname
+
+        # NB: The source file could have a different suffix
+        #     if nbsphinx_custom_formats is used.
+        notebookfile = env.docname + '.ipynb'
+        env.nbsphinx_notebooks[env.docname] = notebookfile
+        auxfile = os.path.join(auxdir, notebookfile)
+        sphinx.util.ensuredir(os.path.dirname(auxfile))
+        resources['nbsphinx_save_notebook'] = auxfile
+
+
+        # TODO: execute notebook
+
+
+        if resources.get('nbsphinx_orphan', False):
+            rst.Parser.parse(self, ':orphan:', document)
+        #if env.config.nbsphinx_prolog:
+        #    prolog = exporter.environment.from_string(
+        #        env.config.nbsphinx_prolog).render(env=env)
+        #    rst.Parser.parse(self, prolog, document)
+
+        for cell in nb.cells:
+            if cell.cell_type == 'markdown':
+                # TODO: how to handle attachments?
+
+                # TODO: somehow handle section levels?
+
+                # TODO: make parser configurable
+                parse_pandoc_markdown(cell.source, document)
+
+            # TODO: if code cell: create docutils nodes
+
+            # TODO: other cell types
+
+        #if env.config.nbsphinx_epilog:
+        #    epilog = exporter.environment.from_string(
+        #        env.config.nbsphinx_epilog).render(env=env)
+        #    rst.Parser.parse(self, epilog, document)
+
+        if resources.get('nbsphinx_widgets', False):
+            env.nbsphinx_widgets.add(env.docname)
+
+        env.nbsphinx_thumbnails[env.docname] = resources.get(
+            'nbsphinx_thumbnail', {})
+
+        # Create additional output files (figures etc.),
+        # see nbconvert.writers.FilesWriter.write()
+        for filename, data in resources.get('outputs', {}).items():
+            dest = os.path.normpath(os.path.join(srcdir, filename))
+            with open(dest, 'wb') as f:
+                f.write(data)
+
+
+def parse_pandoc_markdown(markdownstring, document):
+    rststring = markdown2rst(markdownstring)
+    rststring = """
+.. role:: nbsphinx-math(raw)
+    :format: latex + html
+    :class: math
+
+..
+
+""" + rststring
+
+    #print(rststring)
+    #assert False
+
+    # TODO: ???
+    document.settings.tab_width = 4
+    document.settings.raw_enabled = True
+
+    # TODO: add some transforms?
+    rst_parser = rst.Parser()
+    rst_parser.parse(rststring, document)
+
+
+class NotebookParserOld(rst.Parser):
     """Sphinx source parser for Jupyter notebooks.
 
     Uses nbsphinx.Exporter to convert notebook content to a
