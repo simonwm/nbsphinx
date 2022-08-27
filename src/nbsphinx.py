@@ -1261,11 +1261,8 @@ class NbGallery(sphinx.directives.other.TocTree):
             return ret
         if not isinstance(toctree, sphinx.addnodes.toctree):
             return ret
-        # This distinguishes NbGallery from NbLinkGallery:
-        if 'hidden' in self.option_spec:
-            toctree['nbsphinx_gallery'] = True
-        else:
-            # Disable toctree processing for NbLinkGallery:
+        if isinstance(self, NbLinkGallery):
+            # Disable toctree processing:
             toctree.__class__ = DummyTocTree
         gallerytoc = GalleryToc()
         gallerytoc.extend(ret)
@@ -2169,6 +2166,7 @@ def doctree_resolved(app, doctree, fromdocname):
             node.replace_self(gallery)
         else:
             # NbGallery
+            toctree['nbsphinx_gallery'] = True
             node.replace_self([toctree_wrapper, gallery])
             # NB: Further processing happens in patched_toctree_resolve()
 
