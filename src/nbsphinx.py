@@ -2328,23 +2328,42 @@ def depart_admonition_text(self, node):
 
 
 def depart_gallery_html(self, node):
-    self.body.append('<div class="sphx-glr-thumbnails">\n')
+    import importlib.metadata
+    import packaging.version
+    have_legacy_sphinx_gallery = packaging.version.parse(importlib.metadata.version('sphinx_gallery')) < packaging.version.parse('0.11.0')
+    if not have_legacy_sphinx_gallery:
+        self.body.append('<div class="sphx-glr-thumbnails">\n')
     for title, uri, filename, tooltip in node['entries']:
         if tooltip:
             tooltip = ' tooltip="{}"'.format(html.escape(tooltip))
-        self.body.append("""\
+        self.body.append(("""\
+<div class="sphx-glr-thumbcontainer"{tooltip}>
+  <div class="figure align-center">
+    <img alt="thumbnail" src="{filename}" />
+    <p class="caption">
+      <span class="caption-text">
+        <a class="reference internal" href="{uri}">
+          <span class="std std-ref">{title}</span>
+        </a>
+      </span>
+    </p>
+  </div>
+</div>""" if have_legacy_sphinx_gallery else """\
 <div class="sphx-glr-thumbcontainer"{tooltip}>
   <img alt="" src="{filename}" />
   <p><a class="reference internal" href="{uri}"><span class="std std-ref">{title}</span></a></p>
   <div class="sphx-glr-thumbnail-title">{title}</div>
 </div>
-""".format(
+""").format(
             uri=html.escape(uri),
             title=html.escape(title),
             tooltip=tooltip,
             filename=html.escape(filename),
         ))
-    self.body.append('</div>\n')
+    if have_legacy_sphinx_gallery:
+        self.body.append('<div class="sphx-glr-clear"></div>\n')
+    else:
+        self.body.append('</div>\n')
 
 
 def do_nothing(self, node):
