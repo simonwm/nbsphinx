@@ -2328,13 +2328,18 @@ def depart_admonition_text(self, node):
 
 
 def depart_gallery_html(self, node):
-    # keep temporary support for old sphinx_gallery versions < 0.11.0 by discovering the version at runtime
+    # keep temporary support for old sphinx_gallery versions < 0.11.0 by
+    # discovering the version at runtime
     import importlib.metadata
-    try: # avoid hard dependencies to non-standard library packages for this temporary fix
-        import packaging.version
-        have_legacy_sphinx_gallery = packaging.version.parse(importlib.metadata.version('sphinx_gallery')) < packaging.version.parse('0.11.0')
+    try:
+        # avoid hard dependencies to non-standard library packages for this
+        # temporary fix
+        from packaging.version import parse
+        sg_version = importlib.metadata.version('sphinx_gallery')
+        have_legacy_sphinx_gallery = parse(sg_version) < parse('0.11.0')
     except (ModuleNotFoundError, importlib.metadata.PackageNotFoundError):
-        have_legacy_sphinx_gallery = False # keep default behaviour in case errors arise
+        # keep default behaviour in case errors arise
+        have_legacy_sphinx_gallery = False
     if not have_legacy_sphinx_gallery:
         self.body.append('<div class="sphx-glr-thumbnails">\n')
     for title, uri, filename, tooltip in node['entries']:
@@ -2355,7 +2360,11 @@ def depart_gallery_html(self, node):
 </div>""" if have_legacy_sphinx_gallery else """\
 <div class="sphx-glr-thumbcontainer"{tooltip}>
   <img alt="" src="{filename}" />
-  <p><a class="reference internal" href="{uri}"><span class="std std-ref">{title}</span></a></p>
+  <p>
+    <a class="reference internal" href="{uri}">
+      <span class="std std-ref">{title}</span>
+    </a>
+  </p>
   <div class="sphx-glr-thumbnail-title">{title}</div>
 </div>
 """).format(
